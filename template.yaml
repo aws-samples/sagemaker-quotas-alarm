@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Parameters:
+  ResourceUsageThreshold:
+    Type: Number
+    Default: 50
+Resources:
+  SageMakerNotebookInstanceMlt3mediumUsageAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      ActionsEnabled: True
+      AlarmActions:
+        - !GetAtt UpdateQuotasTopic.TopicArn
+      AlarmDescription: 'ml.t3.medium for SageMaker notebook instance usage above 50% alarm'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      EvaluationPeriods: 10
+      Metrics:
+        - Id: usage_data
+          MetricStat:
+            Metric:
+              Dimensions:
+              - Name: Class
+                Value: None
+              - Name: Resource
+                Value: notebook-instance/ml.t3.medium
+              - Name: Service
+                Value: SageMaker
+              - Name: Type
+                Value: Resource
+              MetricName: ResourceCount
+              Namespace: AWS/Usage
+            Period: 3600
+            Stat: Maximum
+          ReturnData: false
+        - Expression: (usage_data/SERVICE_QUOTA(usage_data))*100
+          Id: pct_utilization
+          Label: '% Utilization'
+          ReturnData: true
+      Threshold: !Ref ResourceUsageThreshold
+  UpdateQuotasTopic:
+    Type: 'AWS::SNS::Topic'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W47
+            reason: "To simplify the example, no keys are added."
+    Properties:
+      DisplayName: 'Update Quotas'
+  UpdateQuotasFunction:
+    Type: 'AWS::Serverless::Function'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "ListServiceQuotas does not have target resource."
+          - id: W89
+            reason: "Customer may provide VPC."
+    Properties:
+      CodeUri: functions/update_quotas/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Timeout: 60
+      ReservedConcurrentExecutions: 10
+      MemorySize: 512
+      Events:
+        UpdateQuotasSNS:
+          Type: 'SNS'
+          Properties:
+            Topic: !GetAtt UpdateQuotasTopic.TopicArn
+      Policies:
+        - AWSLambdaExecute
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'servicequotas:ListServiceQuotaIncreaseRequestsInTemplate'
+                - 'servicequotas:GetServiceQuota'
+                - 'servicequotas:AssociateServiceQuotaTemplate'
+                - 'iam:CreateServiceLinkedRole'
+              Resource: '*'
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'servicequotas:PutServiceQuotaIncreaseRequestIntoTemplate'
+                - 'servicequotas:RequestServiceQuotaIncrease'
+              Resource: !Sub 'arn:aws:servicequotas:${AWS::Region}:${AWS::AccountId}:sagemaker/*'
