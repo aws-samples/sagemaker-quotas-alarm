@@ -3,7 +3,13 @@ Transform: AWS::Serverless-2016-10-31
 Parameters:
   ResourceUsageThreshold:
     Type: Number
-    Default: 50
+    Default: 3
+  SecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: 'Security Groups for Lambda function'
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: 'Subnets for Lambda function'
 Resources:
   SageMakerNotebookInstanceMlt3mediumUsageAlarm:
     Type: 'AWS::CloudWatch::Alarm'
@@ -37,15 +43,55 @@ Resources:
           Label: '% Utilization'
           ReturnData: true
       Threshold: !Ref ResourceUsageThreshold
+  DefaultKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      EnableKeyRotation: True
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - 'kms:DescribeKey'
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+            Resource: '*'
   UpdateQuotasTopic:
     Type: 'AWS::SNS::Topic'
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: W47
-            reason: "To simplify the example, no keys are added."
     Properties:
       DisplayName: 'Update Quotas'
+      KmsMasterKeyId: !Ref DefaultKey
   UpdateQuotasFunction:
     Type: 'AWS::Serverless::Function'
     Metadata:
@@ -53,8 +99,6 @@ Resources:
         rules_to_suppress:
           - id: W11
             reason: "ListServiceQuotas does not have target resource."
-          - id: W89
-            reason: "Customer may provide VPC."
     Properties:
       CodeUri: functions/update_quotas/
       Handler: app.lambda_handler
@@ -69,6 +113,9 @@ Resources:
           Type: 'SNS'
           Properties:
             Topic: !GetAtt UpdateQuotasTopic.TopicArn
+      VpcConfig:
+        SecurityGroupIds: !Ref SecurityGroupIds
+        SubnetIds: !Ref SubnetIds
       Policies:
         - AWSLambdaExecute
         - Version: '2012-10-17'
